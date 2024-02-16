@@ -1,0 +1,93 @@
+version: '3.8'
+  # from https://hub.docker.com/_/redmine/
+services:
+  mailserver:
+    image: ghcr.io/docker-mailserver/docker-mailserver:latest
+    container_name: mailserver
+    # Provide the FQDN of your mail server here (Your DNS MX record should point to this value)
+    hostname: mail.passengerdronesamerica.com
+    env_file: mailserver.env
+    # More information about the mail-server ports:
+    # https://docker-mailserver.github.io/docker-mailserver/latest/config/security/understanding-the-ports/
+    # To avoid conflicts with yaml base-60 float, DO NOT remove the quotation marks.
+    ports:
+      - "25:25"    # SMTP  (explicit TLS => STARTTLS, Authentication is DISABLED => use port 465/587 instead)
+      - "143:143"  # IMAP4 (explicit TLS => STARTTLS)
+      - "465:465"  # ESMTP (implicit TLS)
+      - "587:587"  # ESMTP (explicit TLS => STARTTLS)
+      - "993:993"  # IMAP4 (implicit TLS)
+    volumes:
+      - ./docker-data/dms/mail-data/:/var/mail/
+      - ./docker-data/dms/mail-state/:/var/mail-state/
+      - ./docker-data/dms/mail-logs/:/var/log/mail/
+      - ./docker-data/dms/config/:/tmp/docker-mailserver/
+      - /etc/letsencrypt/:/etc/letsencrypt/
+      - /etc/localtime:/etc/localtime:ro
+    restart: always
+    stop_grace_period: 1m
+    # Uncomment if using `ENABLE_FAIL2BAN=1`:
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: "ss --listening --tcp | grep -P 'LISTEN.+:smtp' || exit 1"
+      timeout: 3s
+      retries: 0
+  
+  redmine:
+    image: redmine5:latest
+    container_name: redmine
+      #entrypoint: sh -c "/usr/src/redmine/setup-mail-wrapper.sh"
+    volumes:
+      - /aphdata/apps/redmine5-files:/usr/src/redmine/files
+      - /var/log/redmine5:/usr/src/redmine/log
+    networks:
+      - default
+    restart: always
+    extra_hosts:
+      - "dockermail:172.17.1.1"
+    environment:
+      REDMINE_DB_MYSQL: mysql
+      REDMINE_DB_DATABASE: redmine
+      REDMINE_DB_USERNAME: redmine
+      REDMINE_DB_PASSWORD: AP@xDsLSSsiK88*!$7BV3QBvu2zSgsMK
+      REDMINE_SECRET_KEY_BASE: b86fb3b3893f3342adead4f54b948de741c56c2bea1b8fb6f372b88fb6ed1bef6714fd9c7b36434848059e229eea39e5e01daedc011b40cb574485af698b5872
+
+  mysql:
+    image: mysql:latest
+    volumes:
+      - /aphdata/apps/mysql82-main-data:/var/lib/mysql
+    networks:
+      - default
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: SeFJamCUVZ7@4iEEzkBSCrg99u8ED^5y
+      MYSQL_DATABASE: redmine
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    restart: always
+    environment:
+      PMA_ARBITRARY: 1
+      #PMA_HOST: mysql
+      #PMA_USER: wordpress_user
+      #PMA_PASSWORD: wordpress_password
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    env_file: tunnel.env
+    networks:
+      - default
+    restart: always
+    container_name: tunnel
+    depends_on:
+      - redmine
+
+networks:
+  default:
+    ipam:
+      driver: default
+      config:
+        # set static subnet so postfix mynetworks doesn't have to change
+        - subnet: 172.17.1.0/24
+          gateway: 172.17.1.1
